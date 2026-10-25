@@ -33,7 +33,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Update CN-1 to CN-9
+      - name: Update IP Groups
         run: python scripts/update_ipgroup.py
 
       - name: Commit and push changes
@@ -41,11 +41,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add ipgroup.csv tmp/ipgroup.csv
+          git add ipgroup.csv ipv6group.csv
+          git add tmp/ipgroup.csv tmp/ipv6group.csv
 
           if git diff --cached --quiet; then
-            echo "IP group data unchanged."
+            echo "IPv4 and IPv6 IP group data unchanged."
           else
-            git commit -m "chore: update China IP groups"
+            git commit -m "chore: update IPv4 and IPv6 IP groups"
             git push origin HEAD:master
           fi
