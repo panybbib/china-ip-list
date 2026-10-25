@@ -42,11 +42,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add ipgroup.csv ipv6group.csv
-          git add tmp/ipgroup.csv tmp/ipv6group.csv
+          git add tmp/
 
           if git diff --cached --quiet; then
-            echo "IPv4 and IPv6 IP group data unchanged."
+            echo "IP group data unchanged."
           else
-            git commit -m "chore: update IPv4 and IPv6 IP groups"
+            git commit -m "chore: update China IP groups"
             git push origin HEAD:master
           fi
