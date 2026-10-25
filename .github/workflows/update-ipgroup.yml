@@ -3,9 +3,9 @@ name: Update China IP Groups
 
 on:
   workflow_dispatch:
-  schedule:
+  # schedule:
     # 每天北京时间 08:30 执行（UTC 00:30）
-    - cron: "30 0 * * *"
+    # - cron: "30 0 * * *"
   push:
     paths:
       - "scripts/update_ipgroup.py"
