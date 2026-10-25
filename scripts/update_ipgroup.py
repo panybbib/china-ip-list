@@ -8,16 +8,19 @@ import ipaddress
 import tempfile
 import urllib.request
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = ROOT / "tmp"
 ENCODING = "gbk"
+BEIJING_TZ = timezone(timedelta(hours=8))
+UPDATE_DATE = datetime.now(BEIJING_TZ).strftime("%Y%m%d")
 MAX_PER_GROUP = 1000
 
 # IPv4 配置
 IPV4 = {
-    "input": ROOT / "ipgroup.csv",
-    "output": OUTPUT_DIR / "ipgroup.csv",
+    "input": ROOT / "tmp" / "ipgroup.csv",
+    "output": OUTPUT_DIR / f"ipgroup_{UPDATE_DATE}.csv",
     "url": (
         "https://raw.githubusercontent.com/"
         "mayaxcn/china-ip-list/refs/heads/master/chnroute.txt"
@@ -32,8 +35,8 @@ IPV4 = {
 
 # IPv6 配置：不要求 type 字段
 IPV6 = {
-    "input": ROOT / "ipv6group.csv",
-    "output": OUTPUT_DIR / "ipv6group.csv",
+    "input": ROOT / "tmp" / "ipv6group.csv",
+    "output": OUTPUT_DIR / f"ipv6group_{UPDATE_DATE}.csv",
     "url": (
         "https://raw.githubusercontent.com/"
         "mayaxcn/china-ip-list/refs/heads/master/chnroute_v6.txt"
