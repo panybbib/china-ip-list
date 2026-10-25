@@ -5,7 +5,6 @@
 import csv
 import io
 import ipaddress
-import shutil
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -13,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = ROOT / "tmp"
 ENCODING = "gbk"
+MAX_PER_GROUP = 1000
 
 # IPv4 配置
 IPV4 = {
@@ -25,9 +25,12 @@ IPV4 = {
     "prefix": "CN-",
     "groups": 9,
     "version": 4,
+    "required_columns": [
+        "id", "comment", "type", "group_name", "addr_pool"
+    ],
 }
 
-# IPv6 配置
+# IPv6 配置：不要求 type 字段
 IPV6 = {
     "input": ROOT / "ipv6group.csv",
     "output": OUTPUT_DIR / "ipv6group.csv",
@@ -38,22 +41,17 @@ IPV6 = {
     "prefix": "CN6-",
     "groups": 3,
     "version": 6,
-}
-
-MAX_PER_GROUP = 1000
-
-REQUIRED_COLUMNS = {
-    "id", "comment", "type", "group_name", "addr_pool"
+    "required_columns": [
+        "id", "comment", "group_name", "addr_pool"
+    ],
 }
 
 
 def download_networks(config):
-    """下载并验证 IPv4 或 IPv6 CIDR 列表。"""
+    """下载并验证对应版本的 CIDR 网段。"""
     request = urllib.request.Request(
         config["url"],
-        headers={
-            "User-Agent": "GitHub-Actions-IPGroup-Updater"
-        },
+        headers={"User-Agent": "GitHub-Actions-IPGroup-Updater"},
     )
 
     with urllib.request.urlopen(request, timeout=60) as response:
@@ -71,13 +69,13 @@ def download_networks(config):
             network = ipaddress.ip_network(line, strict=True)
         except ValueError as exc:
             raise ValueError(
-                f'{config["prefix"]} 数据源第 {line_number} 行格式错误：'
+                f'{config["prefix"]} 数据源第 {line_number} 行无效：'
                 f"{line}"
             ) from exc
 
         if network.version != config["version"]:
             raise ValueError(
-                f'{config["prefix"]} 数据源地址类型错误：{line}'
+                f'{config["prefix"]} 地址版本错误：{line}'
             )
 
         networks.append(str(network))
@@ -93,23 +91,20 @@ def download_networks(config):
         )
 
     capacity = config["groups"] * MAX_PER_GROUP
-
     if len(networks) > capacity:
         raise RuntimeError(
             f'{config["prefix"]} 共 {len(networks)} 个网段，'
-            f"超过最大容量 {capacity}，请扩充分组。"
+            f"超过容量 {capacity}，请扩充分组。"
         )
 
     print(
-        f'{config["prefix"]} 下载完成：'
-        f"{len(networks)} 个 IPv{config['version']} 网段"
+        f'{config["prefix"]} 下载成功：{len(networks)} 个网段'
     )
-
     return networks
 
 
 def read_csv(config):
-    """读取原 CSV，检查表头及分组是否存在。"""
+    """读取 CSV，并按各自配置校验表头。"""
     input_file = config["input"]
 
     if not input_file.is_file():
@@ -123,11 +118,15 @@ def read_csv(config):
         if not reader.fieldnames:
             raise RuntimeError(f"{input_file.name} 缺少表头。")
 
-        missing = REQUIRED_COLUMNS - set(reader.fieldnames)
-
+        # 关键修正：按文件配置检查字段，不统一要求 type
+        missing = (
+            set(config["required_columns"])
+            - set(reader.fieldnames)
+        )
         if missing:
             raise RuntimeError(
-                f"{input_file.name} 缺少字段：{sorted(missing)}"
+                f"{input_file.name} 缺少必要字段："
+                f"{sorted(missing)}"
             )
 
         fieldnames = reader.fieldnames
@@ -142,7 +141,6 @@ def read_csv(config):
 
     for index in range(1, config["groups"] + 1):
         name = f'{config["prefix"]}{index}'
-
         if name not in names:
             raise RuntimeError(
                 f"{input_file.name} 缺少分组 {name}。"
@@ -152,19 +150,16 @@ def read_csv(config):
 
 
 def update_rows(config, rows, networks):
-    """按源数据顺序分组，每组最多 1000 个网段。"""
+    """按原始顺序更新各分组，每组最多 1000 个网段。"""
     for index in range(config["groups"]):
         name = f'{config["prefix"]}{index + 1}'
-
         start = index * MAX_PER_GROUP
-        end = start + MAX_PER_GROUP
-        group_networks = networks[start:end]
+        group_networks = networks[start:start + MAX_PER_GROUP]
 
         row = next(
             item for item in rows
             if item["group_name"] == name
         )
-
         row["addr_pool"] = ",".join(group_networks)
 
         print(f"{name}: {len(group_networks)} 个网段")
@@ -173,43 +168,55 @@ def update_rows(config, rows, networks):
 
 
 def serialize_csv(fieldnames, rows):
-    """生成保持原字段顺序及 GBK 编码的 CSV 字节。"""
+    """保持原有表头、列顺序及 GBK 编码。"""
     buffer = io.StringIO(newline="")
-
     writer = csv.DictWriter(
         buffer,
         fieldnames=fieldnames,
         extrasaction="raise",
         lineterminator="\n",
     )
-
     writer.writeheader()
     writer.writerows(rows)
-
     return buffer.getvalue().encode(ENCODING)
 
 
 def validate_csv(config, content, expected_total):
-    """回读验证生成文件，确保分组容量和总数正确。"""
+    """校验输出文件结构、IP 版本和各分组容量。"""
     decoded = content.decode(ENCODING)
     reader = csv.DictReader(io.StringIO(decoded, newline=""))
     rows = list(reader)
 
     if not reader.fieldnames:
-        raise RuntimeError("生成的 CSV 缺少表头。")
+        raise RuntimeError("生成文件缺少表头。")
+
+    missing = (
+        set(config["required_columns"]) - set(reader.fieldnames)
+    )
+    if missing:
+        raise RuntimeError(
+            f"生成文件缺少字段：{sorted(missing)}"
+        )
 
     names = [row["group_name"] for row in rows]
+    if len(names) != len(set(names)):
+        raise RuntimeError("生成文件存在重复 group_name。")
 
-    for index in range(1, config["groups"] + 1):
-        name = f'{config["prefix"]}{index}'
+    expected_names = {
+        f'{config["prefix"]}{i}'
+        for i in range(1, config["groups"] + 1)
+    }
 
+    actual_total = 0
+
+    for name in expected_names:
         matches = [
             row for row in rows
             if row["group_name"] == name
         ]
 
         if len(matches) != 1:
-            raise RuntimeError(f"生成文件中的 {name} 不唯一。")
+            raise RuntimeError(f"分组 {name} 不唯一或不存在。")
 
         value = matches[0]["addr_pool"]
         items = value.split(",") if value else []
@@ -218,29 +225,29 @@ def validate_csv(config, content, expected_total):
             raise RuntimeError(f"{name} 超过 1000 个网段。")
 
         for item in items:
-            network = ipaddress.ip_network(item, strict=True)
+            try:
+                network = ipaddress.ip_network(item, strict=True)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"{name} 包含无效网段：{item}"
+                ) from exc
 
             if network.version != config["version"]:
                 raise RuntimeError(
-                    f"{name} 包含错误类型的网段：{item}"
+                    f"{name} 包含错误版本的网段：{item}"
                 )
 
-    actual_total = sum(
-        len(row["addr_pool"].split(","))
-        for row in rows
-        if row["group_name"].startswith(config["prefix"])
-        and row["addr_pool"]
-    )
+        actual_total += len(items)
 
     if actual_total != expected_total:
         raise RuntimeError(
-            f"{config['prefix']} 总数校验失败："
+            f'{config["prefix"]} 总数校验失败：'
             f"预期 {expected_total}，实际 {actual_total}"
         )
 
 
 def prepare_update(config):
-    """完成单份 CSV 的读取、更新、序列化和校验。"""
+    """完成单份 CSV 的更新及完整性检查。"""
     networks = download_networks(config)
     fieldnames, rows = read_csv(config)
     update_rows(config, rows, networks)
@@ -254,16 +261,16 @@ def prepare_update(config):
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 两份数据全部处理和校验通过后，才开始写入文件
+    # 两份数据均完成下载、更新和校验后才写文件
     updates = [
         prepare_update(IPV4),
         prepare_update(IPV6),
     ]
 
-    # 先在各自目标目录中写入临时文件
     staged_files = []
 
     try:
+        # 先生成所有临时文件
         for config, content in updates:
             for destination in (
                 config["input"],
@@ -285,7 +292,7 @@ def main():
                         (Path(file.name), destination)
                     )
 
-        # 全部临时文件生成后再替换目标文件
+        # 临时文件全部成功后，再替换正式文件
         for staged, destination in staged_files:
             staged.replace(destination)
             print(f"已更新：{destination.relative_to(ROOT)}")
@@ -295,7 +302,7 @@ def main():
             if staged.exists():
                 staged.unlink()
 
-    print("IPv4 和 IPv6 分组数据更新及校验完成。")
+    print("IPv4、IPv6 数据更新及校验全部完成。")
 
 
 if __name__ == "__main__":
