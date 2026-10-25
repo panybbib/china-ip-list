@@ -36,7 +36,7 @@ IPV6 = {
     "output": OUTPUT_DIR / "ipv6group.csv",
     "url": (
         "https://raw.githubusercontent.com/"
-        "mayaxcn/china-ip-list/refs/heads/master/chnroute6.txt"
+        "mayaxcn/china-ip-list/refs/heads/master/chnroute_v6.txt"
     ),
     "prefix": "CN6-",
     "groups": 3,
